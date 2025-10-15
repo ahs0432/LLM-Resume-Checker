@@ -3,22 +3,60 @@ import json
 import uuid
 import os
 import google.generativeai as genai
+import openai
 
 st.title('채용 공고 관리')
 
-# --- Gemini API Configuration ---
-api_key = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY")
-if not api_key:
-    st.error("Gemini API 키가 설정되지 않았습니다. 환경 변수 또는 .streamlit/secrets.toml 파일을 확인해주세요.")
+# --- LLM Configuration ---
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER").upper()
+if not LLM_PROVIDER:
+    LLM_PROVIDER = st.secrets.get("LLM_PROVIDER").upper()
+
+if not LLM_PROVIDER:
+    LLM_PROVIDER = "GEMINI"
+
+api_key = None
+model = None
+error_messages = []
+
+if LLM_PROVIDER == "GEMINI":
+    # 환경 변수를 우선적으로 확인 (GOOGLE_API_KEY, GEMINI_API_KEY)
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    # 환경 변수가 없는 경우에만 Streamlit secrets에서 가져옴
+    if not api_key:
+        api_key = st.secrets.get("GOOGLE_API_KEY") or st.secrets.get("GEMINI_API_KEY")
+
+    if api_key:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-2.5-pro')
+    else:
+        error_messages.append("Gemini API 키가 설정되지 않았습니다. 환경 변수(GOOGLE_API_KEY 또는 GEMINI_API_KEY) 또는 .streamlit/secrets.toml 파일을 확인해주세요.")
+
+elif LLM_PROVIDER == "OPENAI":
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+    
+    if api_key:
+        # OpenAI는 모델 객체를 미리 만들지 않고, API 호출 시 모델 이름을 지정합니다.
+        model = "gpt-5" # 사용할 모델
+    else:
+        error_messages.append("OpenAI API 키가 설정되지 않았습니다. 환경 변수(OPENAI_API_KEY) 또는 .streamlit/secrets.toml 파일을 확인해주세요.")
+
+else:
+    error_messages.append(f"지원하지 않는 LLM_PROVIDER입니다: {LLM_PROVIDER}. 'GEMINI' 또는 'OPENAI' 중에서 선택해주세요.")
+
+if error_messages:
+    for msg in error_messages:
+        st.error(msg)
     st.stop()
 
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel('gemini-2.5-pro')
+st.info(f"현재 사용 중인 LLM: **{LLM_PROVIDER}**")
 
 # --- Utility Functions ---
-def generate_with_gemini(job_description):
-    """Calls Gemini API to generate evaluation criteria and prompt."""
-    prompt = f"""당신은 IT 회사 전문 채용 관리자입니다.
+def generate_with_llm(job_description):
+    """Calls the selected LLM API to generate evaluation criteria and prompt."""
+    prompt = f'''당신은 IT 회사 전문 채용 관리자입니다.
     아래 주어진 채용 공고 내용을 분석하여, 지원자의 역량을 평가하기 위한 기준과 LLM 평가자에게 전달할 프롬프트를 생성해야 합니다.
 
     **채용 공고:**
@@ -47,14 +85,28 @@ def generate_with_gemini(job_description):
         "prompt": "LLM 평가자를 위한 프롬프트 내용"
     }}
     ```
-    """
+    '''
     try:
-        response = model.generate_content(prompt)
-        # Clean up the response to extract only the JSON part
-        cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(cleaned_response)
+        if LLM_PROVIDER == "GEMINI":
+            response = model.generate_content(prompt)
+            cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
+            return json.loads(cleaned_response)
+        
+        elif LLM_PROVIDER == "OPENAI":
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "당신은 채용을 위한 LLM 평가자를 만들기 위한 프롬프트 엔지니어입니다. 주어지는 내용을 보고 내용에 맞춰 프롬프트를 설계합니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"}
+            )
+            content = response.choices[0].message.content
+            return json.loads(content)
+
     except Exception as e:
-        st.error(f"Gemini API 호출 중 오류가 발생했습니다: {e}")
+        st.error(f"{LLM_PROVIDER} API 호출 중 오류가 발생했습니다: {e}")
         return None
 
 # --- Initialize Session State ---
@@ -72,12 +124,12 @@ st.header("1. 채용 공고 입력")
 st.session_state.job_title = st.text_input("채용 공고 제목", st.session_state.job_title)
 st.session_state.job_description = st.text_area("채용 공고 내용", st.session_state.job_description, height=300)
 
-if st.button("2. 평가 항목 및 프롬프트 자동 생성 (Gemini API)"):
+if st.button(f"2. 평가 항목 및 프롬프트 자동 생성 ({LLM_PROVIDER})"):
     if not st.session_state.job_description:
         st.error("채용 공고 내용을 입력해주세요.")
     else:
-        with st.spinner("Gemini API를 호출하여 평가 항목과 프롬프트를 생성 중입니다..."):
-            generated_data = generate_with_gemini(st.session_state.job_description)
+        with st.spinner(f"{LLM_PROVIDER} API를 호출하여 평가 항목과 프롬프트를 생성 중입니다..."):
+            generated_data = generate_with_llm(st.session_state.job_description)
             if generated_data:
                 st.session_state.evaluation_criteria = "\n".join([f"{k}:{v}" for k, v in generated_data.get('evaluation_criteria', {}).items()])
                 st.session_state.prompt = generated_data.get('prompt', '')
