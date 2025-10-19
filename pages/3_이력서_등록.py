@@ -30,7 +30,7 @@ if LLM_PROVIDER == "GEMINI":
 
     if api_key:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        model = genai.GenerativeModel('gemini-2.5-pro')
     else:
         error_messages.append("Gemini API 키가 설정되지 않았습니다. 환경 변수(GOOGLE_API_KEY 또는 GEMINI_API_KEY) 또는 .streamlit/secrets.toml 파일을 확인해주세요.")
 
