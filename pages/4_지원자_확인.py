@@ -2,7 +2,9 @@ import streamlit as st
 import os
 import json
 import pandas as pd
+import base64
 
+st.set_page_config(layout="wide")
 st.title("채용 공고별 지원자 보기")
 
 # --- Utility Functions ---
@@ -18,6 +20,16 @@ def get_job_postings():
                 job_data = json.load(f)
                 postings[job_data['id']] = job_data['title']
     return postings
+
+def show_pdf(file_path):
+    """Displays a PDF file in an iframe with specific view settings."""
+    with open(file_path, "rb") as f:
+        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+    # Add parameters to the src URL to control the viewer
+    # view=FitH: Fit horizontally (width)
+    # pagemode=none: Hide side panels (thumbnails, bookmarks, etc.)
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#view=FitH&pagemode=none" width="100%" height="800" type="application/pdf"></iframe>'
+    st.markdown(pdf_display, unsafe_allow_html=True)
 
 # --- Page Logic ---
 job_postings = get_job_postings()
@@ -98,11 +110,21 @@ if os.path.exists(csv_path) and selected_job_id:
                             if q:
                                 st.markdown(f"{i+1}. {q}")
                         
-                        st.download_button(
-                            label="📄 이력서 PDF 다운로드",
-                            data=open(row['pdf_path'], "rb").read(),
-                            file_name=os.path.basename(row['pdf_path'])
-                        )
+                        st.subheader("📄 이력서 원본")
+                        pdf_path = row['pdf_path']
+                        if os.path.exists(pdf_path):
+                            with open(pdf_path, "rb") as f:
+                                st.download_button(
+                                    label="이력서 PDF 다운로드",
+                                    data=f.read(),
+                                    file_name=os.path.basename(pdf_path),
+                                    mime="application/pdf"
+                                )
+                            # Display the PDF viewer
+                            show_pdf(pdf_path)
+                        else:
+                            st.warning("이력서 PDF 파일을 찾을 수 없습니다.")
+                        
                         st.write(" ") # Add some space
 
     except pd.errors.EmptyDataError:

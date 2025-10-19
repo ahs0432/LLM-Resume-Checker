@@ -1,3 +1,4 @@
 # Secret Files
 requirements.md
-.streamlit/secrets.toml
+.streamlit/
+data/

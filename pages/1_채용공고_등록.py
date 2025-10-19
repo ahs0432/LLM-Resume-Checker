@@ -5,6 +5,7 @@ import os
 import google.generativeai as genai
 import openai
 
+st.set_page_config(layout="wide")
 st.title('채용 공고 관리')
 
 # --- LLM Configuration ---
@@ -88,22 +89,60 @@ def generate_with_llm(job_description):
     '''
     try:
         if LLM_PROVIDER == "GEMINI":
-            response = model.generate_content(prompt)
+            # Set strict safety settings to prevent blocking
+            safety_settings = {
+                'HATE': 'BLOCK_NONE',
+                'HARASSMENT': 'BLOCK_NONE',
+                'SEXUAL': 'BLOCK_NONE',
+                'DANGEROUS': 'BLOCK_NONE'
+            }
+            response = model.generate_content(prompt, safety_settings=safety_settings)
+
+            # 1. Check for safety feedback
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                st.error(f"Gemini API 요청이 안전 설정에 의해 차단되었습니다. 이유: {response.prompt_feedback.block_reason}")
+                return None
+
+            # 2. Check for empty response text
+            if not response.text:
+                st.error("Gemini API로부터 빈 응답을 받았습니다. 이력서 내용이나 API 설정에 문제가 있을 수 있습니다.")
+                st.warning(f"전체 API 응답: {response}") # Log full response for debugging
+                return None
+
+            # 3. Clean and parse JSON
             cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
-            return json.loads(cleaned_response)
+            if not cleaned_response:
+                st.error("API 응답에서 JSON 데이터를 찾을 수 없습니다.")
+                st.warning(f"수신된 원본 텍스트: {response.text}")
+                return None
+                
+            try:
+                return json.loads(cleaned_response)
+            except json.JSONDecodeError as e:
+                st.error(f"API 응답을 JSON으로 파싱하는 데 실패했습니다: {e}")
+                st.warning(f"파싱에 실패한 텍스트: {cleaned_response}")
+                return None
         
         elif LLM_PROVIDER == "OPENAI":
             client = openai.OpenAI(api_key=api_key)
             response = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "당신은 채용을 위한 LLM 평가자를 만들기 위한 프롬프트 엔지니어입니다. 주어지는 내용을 보고 내용에 맞춰 프롬프트를 설계합니다."},
+                    {"role": "system", "content": "You are a helpful assistant designed to output JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"}
             )
             content = response.choices[0].message.content
-            return json.loads(content)
+            if not content:
+                st.error("OpenAI API로부터 빈 응답을 받았습니다.")
+                return None
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError as e:
+                st.error(f"OpenAI API 응답을 JSON으로 파싱하는 데 실패했습니다: {e}")
+                st.warning(f"파싱에 실패한 텍스트: {content}")
+                return None
 
     except Exception as e:
         st.error(f"{LLM_PROVIDER} API 호출 중 오류가 발생했습니다: {e}")
